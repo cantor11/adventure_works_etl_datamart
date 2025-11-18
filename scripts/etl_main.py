@@ -34,55 +34,6 @@ PG_CONN_DSN = "host=localhost dbname=adventureWorksDatamart user=postgres passwo
 
 PROCESS_NAME = "internet_reseller_etl"
 
-TMP_DIR = os.path.join(os.getcwd(), "tmp")
-os.makedirs(TMP_DIR, exist_ok=True)
-
-# logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
-log = logging.getLogger("etl")
-
-# ---------------------------
-# HELPERS DB
-# ---------------------------
-def get_pg_conn():
-    return psycopg2.connect(PG_CONN_DSN)
-
-def get_sqlserver_conn():
-    return pyodbc.connect(SQLSERVER_CONN)
-
-# ---------------------------
-# CONTROL: last_run
-# ---------------------------
-def get_last_run(pg_conn, process_name=PROCESS_NAME):
-    with pg_conn.cursor() as cur:
-        cur.execute("""
-            SELECT last_run FROM datamart.control_loads WHERE process_name = %s
-        """, (process_name,))
-        r = cur.fetchone()
-        if r and r[0]:
-            return r[0]
-        else:
-            # default far past date for initial full load
-            return datetime(2000,1,1, tzinfo=timezone.utc)
-
-def upsert_control(pg_conn, process_name, last_run, rows_extracted, rows_loaded, status, message):
-    with pg_conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO datamart.control_loads (process_name, last_run, rows_extracted, rows_loaded, last_status, last_message)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT (process_name) DO UPDATE
-            SET last_run = EXCLUDED.last_run,
-                rows_extracted = EXCLUDED.rows_extracted,
-                rows_loaded = EXCLUDED.rows_loaded,
-                last_status = EXCLUDED.last_status,
-                last_message = EXCLUDED.last_message;
-        """, (process_name, last_run, rows_extracted, rows_loaded, status, message))
-    pg_conn.commit()
-
 # ---------------------------
 # EXTRACTION QUERIES (SQL Server)
 # ---------------------------
@@ -177,6 +128,55 @@ WHERE sp.BusinessEntityID IN (
   SELECT DISTINCT SalesPersonID FROM Sales.SalesOrderHeader WHERE OrderDate >= ?
 )
 """
+
+TMP_DIR = os.path.join(os.getcwd(), "tmp")
+os.makedirs(TMP_DIR, exist_ok=True)
+
+# logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+log = logging.getLogger("etl")
+
+# ---------------------------
+# HELPERS DB
+# ---------------------------
+def get_pg_conn():
+    return psycopg2.connect(PG_CONN_DSN)
+
+def get_sqlserver_conn():
+    return pyodbc.connect(SQLSERVER_CONN)
+
+# ---------------------------
+# CONTROL: last_run
+# ---------------------------
+def get_last_run(pg_conn, process_name=PROCESS_NAME):
+    with pg_conn.cursor() as cur:
+        cur.execute("""
+            SELECT last_run FROM datamart.control_loads WHERE process_name = %s
+        """, (process_name,))
+        r = cur.fetchone()
+        if r and r[0]:
+            return r[0]
+        else:
+            # default far past date for initial full load
+            return datetime(2000,1,1, tzinfo=timezone.utc)
+
+def upsert_control(pg_conn, process_name, last_run, rows_extracted, rows_loaded, status, message):
+    with pg_conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO datamart.control_loads (process_name, last_run, rows_extracted, rows_loaded, last_status, last_message)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (process_name) DO UPDATE
+            SET last_run = EXCLUDED.last_run,
+                rows_extracted = EXCLUDED.rows_extracted,
+                rows_loaded = EXCLUDED.rows_loaded,
+                last_status = EXCLUDED.last_status,
+                last_message = EXCLUDED.last_message;
+        """, (process_name, last_run, rows_extracted, rows_loaded, status, message))
+    pg_conn.commit()
 
 # ---------------------------
 # EXTRACT -> CSV & COPY to staging
@@ -298,7 +298,6 @@ def extract_to_csv_sqlserver(sql, param_date, out_csv_path, int_cols=None, bool_
     log.info("Wrote %d rows to %s", len(df), out_csv_path)
     return len(df), out_csv_path
 
-
 def copy_csv_to_staging(pg_conn, csv_path, table):
     r"""
     COPY con especificación de NULL como '\N' para que Postgres interprete '\N' como NULL.
@@ -313,7 +312,6 @@ def copy_csv_to_staging(pg_conn, csv_path, table):
 # ---------------------------
 # UPSERT DIMENSIONS
 # ---------------------------
-
 def upsert_dim_products(pg_conn, products_csv):
     df = pd.read_csv(products_csv)
     records = [(int(row.product_id), row.product_name, row.category if not pd.isna(row.category) else None, float(row.list_price) if not pd.isna(row.list_price) else None) for row in df.itertuples(index=False)]
